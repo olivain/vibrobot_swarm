@@ -3,6 +3,7 @@
 #include <esp_now.h>
 #include <esp_wifi.h> //NEED THIS TO COMPILE
 #include <SimpleMap.h>  
+#include "Quaternion.h"
 
 
 HardwareSerial MySerial(1);
@@ -17,6 +18,7 @@ struct __attribute__((packed)) DataStruct {
 DataStruct myData;
 
 #define NB_SLAVES 5
+
 uint8_t remoteMac[][6] = {
   {0x36, 0x33, 0x33, 0x33, 0x33, 0x34},
   {0x36, 0x33, 0x33, 0x33, 0x33, 0x35},
@@ -52,11 +54,17 @@ void setup() {
     MySerial.begin(115200, SERIAL_8N1, 16, 17);
    MySerial.setTimeout(10);
      randomSeed(analogRead(0));
+     
+
+       Serial.println("wait a bit to be sure cam is on");
+
+   // delay(5000);
 
    
-    delay(100);
     Serial.println("ok go");
     MySerial.println("setmapping2 YUYV 640 480 20.0 JeVois DemoArUco");
+    delay(50);
+    MySerial.println("setpar dopose true");
     delay(50);
     MySerial.println("setpar serlog None");
     delay(50);
@@ -65,8 +73,6 @@ void setup() {
     MySerial.println("setpar serstyle Detail");
     delay(50);
     MySerial.println("setpar serprec 5");
-    delay(50);
-    MySerial.println("setpar dopose true");
     delay(50);
     MySerial.println("streamon");
     delay(50);
@@ -136,13 +142,21 @@ void setup() {
 #define INLEN 128
 char instr[INLEN + 1];
 char *arr_t[12] = {};
+Quaternion quat;
 
 void loop() {
+  
+   strcpy(myData.text, "dc:1");
+   sendData((uint8_t*)NULL);
+   delay(10);
+   
+  int target_x = 400; // right : -400 <-> left : +400
+  int target_y = 300; // top : -300 <-> bottom : +300
   
   byte len = MySerial.readBytesUntil('\n', instr, INLEN);
   instr[len] = 0;
   
-      Serial.println(instr);
+    //Serial.println(instr);
       char * tok = strtok(instr, " \r\n");
       int nb = 0;
       while(tok) {
@@ -150,6 +164,120 @@ void loop() {
         tok = strtok(0, " \r\n");
         nb++;
       }
+
+    if(nb > 0) {
+      //Serial.println(nb);
+      if(nb > 9) {
+
+        
+        for(int v=0; v < nb; v++) {
+        Serial.print(v);
+        Serial.print(" = ");
+        Serial.println(arr_t[v]);
+        
+        }
+
+        
+       quat.a = atof(arr_t[8]);
+      quat.b = atof(arr_t[9]);
+      quat.c = atof(arr_t[10]);
+      quat.d = atof(arr_t[11]);
+      int x = atoi(arr_t[2]);
+      int y = atoi(arr_t[3]);
+
+      
+
+      quat.normalize(); 
+
+      Quaternion dir;
+      dir.a = 0;
+      dir.b = 0;
+      dir.c = 1;
+      dir.d = 0;
+      Quaternion r = quat.rotate(dir);
+
+      float tx = target_x - x;
+      float ty = target_y - y;
+
+      float mag = sqrt(tx*tx + ty*ty);
+
+      float ntx = tx/mag;
+      float nty = ty/mag;
+
+      float c_alpha = r.b*ntx + r.c*nty;
+      float s_alpha = r.b*nty - r.c*ntx;
+
+      float alpha = atan2(s_alpha,c_alpha)*180/PI;
+
+      
+      Serial.print("alpha = ");
+      Serial.println(alpha);
+
+      if(alpha > -33 && alpha < 33) {
+        strcpy(myData.text, "sv:0");
+        sendData((uint8_t*)remoteMac[atoi(mac_map->get(arr_t[1]).c_str())]);
+        
+        // turn right : 150
+        // turn left: 35
+        
+      } else if(alpha < 0) {
+        // turn left
+        strcpy(myData.text, "sv:35");
+        sendData((uint8_t*)remoteMac[atoi(mac_map->get(arr_t[1]).c_str())]);
+         
+      } else if(alpha > 0) {
+        // turn right
+        strcpy(myData.text, "sv:150");
+        sendData((uint8_t*)remoteMac[atoi(mac_map->get(arr_t[1]).c_str())]);
+         
+      }
+      
+/*
+
+        Serial.print("dir : ");
+        Serial.println(r.a);
+        Serial.println(r.b);
+        Serial.println(r.c);
+        Serial.println(r.d);
+        Serial.print("w : ");
+        Serial.println(quat.a);
+        Serial.print("x : ");
+        Serial.println(quat.b);
+        Serial.print("y : ");
+        Serial.println(quat.c);
+        Serial.print("z : ");
+        Serial.println(quat.d);
+
+        double angle = atan2(r.b, r.c)*180/PI;
+        Serial.println(angle);
+        
+         
+        double head = atan2(2*quat.c*quat.a-2*quat.b*quat.d , 1 - 2*(quat.c*quat.c) - 2*(quat.d*quat.d))*180/PI;
+        Serial.print("atan2 (head) : ");
+        Serial.println(head);
+
+        
+        float delta_x = 320 - x;
+        float delta_y = 240 - y;
+        double theta = atan2(delta_y, delta_x)*180/PI;
+        Serial.print("theta : ");
+        Serial.println(theta);
+
+        double rot_z = atan2(quat.d, quat.a)*180/PI;
+        Serial.print("rot_z: ");
+        Serial.println(rot_z);
+        */
+        
+        /*if(quat.b > 0 && quat.c < 0) {
+          strcpy(myData.text, "sv:60");
+          //sendData((uint8_t*)remoteMac[atoi(mac_map->get(arr_t[1]).c_str())]);
+          
+        }*/
+     
+      }
+    }
+     
+      /*
       if(mac_map->has(arr_t[1])) {
 
           float x1 = atof(arr_t[2]); // center of the aruco tag
@@ -178,8 +306,8 @@ void loop() {
                   sprintf_P(myData.text, "sv:%i", (rand()%170 + 10));
               }
 
-              Serial.print(distSq);
-              Serial.print(radSumSq);
+             // Serial.print(distSq);
+             // Serial.print(radSumSq);
               sendData((uint8_t*)remoteMac[atoi(mac_map->get(arr_t[1]).c_str())]);
               //delay(250);
           
@@ -187,10 +315,9 @@ void loop() {
                 
           }
           
-          //strcpy(myData.text, "sv:0");
-          //sendData((uint8_t*)remoteMac[atoi(mac_map->get(arr_t[1]).c_str())]);
           
-      }
+          
+      } */
       memset(instr,0,INLEN);
 }
    
